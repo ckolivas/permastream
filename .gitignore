@@ -3,4 +3,5 @@
 *.d
 __pycache__/
 /permastream.toml
+/playlists/
 /tests/artifacts/

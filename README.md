@@ -66,6 +66,45 @@ streams = [
 ]
 ```
 
+Entries can also be remote M3U/PLS playlists or local PLS files:
+
+```toml
+streams = [
+    "https://radio.example/listen.pls",
+    "https://backup.example/stations.m3u",
+    "playlists/private.pls",
+]
+```
+
+Local PLS paths are relative to the configuration file's directory. They must
+contain HTTP(S) URLs; local audio files and local M3U files are not supported.
+For example, a PLS file can contain:
+
+```ini
+[playlist]
+NumberOfEntries=2
+File1=https://primary.example/radio?key=YOUR_KEY
+File2=https://backup.example/radio?key=YOUR_KEY
+Version=2
+```
+
+Playlist entries are tried in M3U order or PLS `File1`, `File2`, ... order. An
+unreachable entry falls through to the next, and a playing entry stays selected
+until it fails. Once a playlist is exhausted, it is reloaded on retry, starting
+at its first entry. The outer `streams` list retains its normal priority and
+recovery behaviour. These are radio fallback lists, not a shuffled music queue.
+
+Remote relative URLs resolve against the playlist's final URL after redirects.
+Query strings, including private station keys, are preserved. Playlist detection
+uses content as well as MIME type and filename, so extensionless M3U/PLS URLs
+work too. HLS `.m3u8` manifests continue to be handled by FFmpeg.
+
+Playlists are limited to 256 KiB, 64 entries and four input levels including the
+final stream, with a total of 64 input opens per retry pass. Cycles and oversized
+documents cannot grow the retry work without bound. Logs identify source and
+entry numbers without printing private URLs. Keep private playlists outside the
+repository or in the ignored `playlists/` directory.
+
 To choose paths, bitrates or operational settings:
 
 ```toml
@@ -96,7 +135,7 @@ bitrate = 64
 | Setting | Behaviour |
 | --- | --- |
 | `listen` | IPv4/hostname with port, or bracketed IPv6 such as `[::]:8642`. |
-| `streams` | 1–32 direct HTTP(S) audio or HLS URLs, highest priority first. |
+| `streams` | 1–32 HTTP(S) audio/HLS/M3U/PLS URLs or local PLS paths, highest priority first. |
 | `buffer_seconds` | Audio required before a new or exhausted source is ready. Default 10; range 0.1–120. Adds playback latency. |
 | `timeout_seconds` | Deadline for connecting/probing, then for producing decoded audio. Default 10; range 0.1–300. For HLS, allow for segment publication delays. |
 | `recovery_seconds` | Healthy delivery required before replacing a working source with a higher-priority source. Default 15; range 0–600. |
@@ -139,9 +178,13 @@ Configuration changes require a restart, which disconnects listeners.
 Different stations, or mirrors with different delays, can still produce audible
 programme jumps. Buffering cannot recover programme material lost upstream.
 Silence keeps the stream alive; this version does not provide a local music
-fallback, FLAC output, song-title/ICY metadata forwarding, or M3U/PLS station-list
-resolution. Use the actual media URL (an HLS `.m3u8` media/master URL is supported
-through FFmpeg).
+fallback, FLAC output, or song-title/ICY metadata forwarding.
+
+If a source reports `Stream not found`, the preceding diagnostic lists the
+detected format and any audio codec, sample-rate and channel-count information.
+This means the response did not yield a usable audio stream during probing; it
+does not necessarily mean the HTTP connection failed. These diagnostics omit
+URLs and access tokens.
 
 The output is plain HTTP without authentication or TLS. Use a VPN for private
 remote access. `0.0.0.0` exposes the port on all IPv4 interfaces; use a specific
@@ -167,6 +210,8 @@ audio. It checks priority failover, an open-but-stalled connection, recovery,
 total outage with encoded silence, multiple listeners at both bitrates, slow
 client eviction, valid MP3 frame boundaries, full decoding and clean shutdown.
 Additional fixtures check live HLS and certificate validation on HTTPS segments.
+Playlist fixtures cover remote M3U/PLS, local PLS, redirects, relative URLs,
+private query strings, fallback, refresh, cycles and oversized input.
 It does not contact public stations. Tests require permission to bind loopback
 sockets.
 
@@ -179,6 +224,7 @@ cc -D_GNU_SOURCE -Isrc -Ivendor $(pkg-config --cflags libavformat libavcodec lib
   $(pkg-config --libs libavformat libavcodec libavutil libswresample) -lm -pthread
 PERMASTREAM_BIN=/tmp/permastream-asan python3 tests/integration.py
 PERMASTREAM_BIN=/tmp/permastream-asan python3 tests/hls.py
+PERMASTREAM_BIN=/tmp/permastream-asan python3 tests/playlists.py
 ```
 
 The small MIT-licensed TOML parser is vendored under `vendor/`; no parser package

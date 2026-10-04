@@ -49,6 +49,14 @@ def main():
 
         class Live(Segments):
             def do_GET(self):
+                if self.path == "/radio.pls":
+                    data = b"[playlist]\nFile1=live.m3u8\n"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "audio/x-scpls")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if not self.path.endswith(".m3u8"):
                     return super().do_GET()
                 last = min(28, int(time.monotonic() - start) + 3)
@@ -69,7 +77,8 @@ def main():
         thread = threading.Thread(target=live.serve_forever, daemon=True)
         thread.start()
         try:
-            for manifest, expected in [("live.m3u8", "primary"), ("untrusted.m3u8", "silence")]:
+            for manifest, expected in [("live.m3u8", "primary"), ("radio.pls", "primary"),
+                                       ("untrusted.m3u8", "silence")]:
                 port = free_port()
                 config = temp / "config.toml"
                 config.write_text(f'''listen = "127.0.0.1:{port}"

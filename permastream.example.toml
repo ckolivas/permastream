@@ -1,7 +1,8 @@
 # Copy to permastream.toml, replace the URLs, then run ./permastream.
 listen = "0.0.0.0:8642"
 
-# Highest priority first. Use direct HTTP(S) audio or HLS URLs.
+# Highest priority first: HTTP(S) audio, HLS, M3U/PLS URLs, or local PLS files.
+# Local paths (e.g. "playlists/private.pls") are relative to this config file.
 streams = [
     "https://primary.example/radio",
     "https://backup.example/radio",

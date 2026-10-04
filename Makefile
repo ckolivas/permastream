@@ -6,7 +6,7 @@ CPPFLAGS += -D_GNU_SOURCE -Isrc -Ivendor $(shell $(PKG_CONFIG) --cflags $(FFMPEG
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wformat=2 -pthread
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(FFMPEG_PACKAGES)) -lm -pthread
-SOURCES = src/main.c src/config.c src/source.c src/output.c src/server.c vendor/toml.c
+SOURCES = src/main.c src/config.c src/source.c src/playlist.c src/output.c src/server.c vendor/toml.c
 OBJECTS = $(SOURCES:.c=.o)
 
 .PHONY: all clean test install uninstall
@@ -23,6 +23,7 @@ permastream: $(OBJECTS)
 test: permastream
 	python3 tests/integration.py
 	python3 tests/hls.py
+	python3 tests/playlists.py
 
 install: permastream
 	install -Dm755 permastream $(DESTDIR)$(PREFIX)/bin/permastream

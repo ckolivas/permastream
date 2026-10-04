@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 static int keys_allowed(toml_table_t *table, const char *const *allowed)
 {
@@ -118,7 +119,7 @@ int config_load(const char *path, Config *config)
     toml_array_t *streams = toml_array_in(root, "streams");
     int count = streams ? toml_array_nelem(streams) : 0;
     if (count < 1 || count > MAX_SOURCES) {
-        fprintf(stderr, "streams must contain 1 to %d HTTP(S) URLs\n", MAX_SOURCES);
+        fprintf(stderr, "streams must contain 1 to %d HTTP(S) URLs or local PLS paths\n", MAX_SOURCES);
         goto fail;
     }
     for (int i = 0; i < count; i++) {
@@ -128,10 +129,25 @@ int config_load(const char *path, Config *config)
             goto fail;
         }
         config->urls[config->source_count++] = url.u.s;
-        if ((strncmp(url.u.s, "http://", 7) && strncmp(url.u.s, "https://", 8)) ||
-            strpbrk(url.u.s, "\r\n\t ")) {
-            fprintf(stderr, "Stream %d needs an HTTP(S) audio URL without whitespace\n", i + 1);
+        bool remote = !strncmp(url.u.s, "http://", 7) || !strncmp(url.u.s, "https://", 8);
+        size_t length = strlen(url.u.s);
+        bool local_pls = !strchr(url.u.s, ':') && length > 4 &&
+            !strcasecmp(url.u.s + length - 4, ".pls");
+        if ((!remote && !local_pls) || strpbrk(url.u.s, "\r\n\t") ||
+            (remote && strchr(url.u.s, ' '))) {
+            fprintf(stderr, "Stream %d needs an HTTP(S) URL or local .pls path\n", i + 1);
             goto fail;
+        }
+        /* Local PLS paths are relative to the config file, not the shell cwd. */
+        if (local_pls && url.u.s[0] != '/') {
+            const char *slash = strrchr(path, '/');
+            if (slash) {
+                char *resolved = NULL;
+                if (asprintf(&resolved, "%.*s/%s", (int)(slash - path), path, url.u.s) < 0)
+                    goto fail;
+                free(config->urls[i]);
+                config->urls[i] = resolved;
+            }
         }
     }
     toml_array_t *outputs = toml_array_in(root, "outputs");

@@ -15,6 +15,11 @@
 #if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 24, 100)
 typedef AVChannelLayout AudioLayout;
 
+static inline int audio_parameter_channels(const AVCodecParameters *parameters)
+{
+    return parameters->ch_layout.nb_channels;
+}
+
 static inline int audio_layout_from_frame(AudioLayout *layout, const AVFrame *frame)
 {
     if (frame->ch_layout.nb_channels < 1)
@@ -60,6 +65,11 @@ static inline int audio_frame_layout(AVFrame *frame, const AVCodecContext *codec
 }
 #else
 typedef uint64_t AudioLayout;
+
+static inline int audio_parameter_channels(const AVCodecParameters *parameters)
+{
+    return parameters->channels;
+}
 
 static inline int audio_layout_from_frame(AudioLayout *layout, const AVFrame *frame)
 {

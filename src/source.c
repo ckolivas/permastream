@@ -1,5 +1,6 @@
 #include "permastream.h"
 #include "ffmpeg_compat.h"
+#include "playlist.h"
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -120,7 +121,7 @@ static int receive_audio(Source *source, AVCodecContext *decoder, AVFrame *frame
     return ret == AVERROR(EAGAIN) || ret == AVERROR_EOF ? 0 : ret;
 }
 
-static int play_connection(Source *source)
+static int play_media(Source *source, PlaylistInput *input)
 {
     AVFormatContext *format = avformat_alloc_context();
     AVCodecContext *decoder = NULL;
@@ -137,6 +138,10 @@ static int play_connection(Source *source)
     source->deadline = monotonic_ns() + (int64_t)(source->config->timeout_seconds * 1e9);
     format->interrupt_callback = (AVIOInterruptCB){ interrupted, source };
     format->io_open = open_input_io;
+    if (input->replay) {
+        format->pb = input->replay;
+        format->flags |= AVFMT_FLAG_CUSTOM_IO;
+    }
     AVDictionary *options = NULL;
     av_dict_set(&options, "protocol_whitelist", "http,https,tcp,tls,crypto", 0);
     av_dict_set(&options, "user_agent", "permastream/" VERSION, 0);
@@ -145,7 +150,7 @@ static int play_connection(Source *source)
                     (int64_t)(source->config->timeout_seconds * 1e6), 0);
     av_dict_set_int(&options, "analyzeduration", 1000000, 0);
     av_dict_set_int(&options, "probesize", 131072, 0);
-    ret = avformat_open_input(&format, source->config->urls[source->index], NULL, &options);
+    ret = avformat_open_input(&format, input->url, NULL, &options);
     av_dict_free(&options);
     if (ret < 0)
         goto done;
@@ -156,6 +161,15 @@ static int play_connection(Source *source)
      * AVCodec **. Look up the decoder separately instead of casting pointers. */
     int audio = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     if (audio < 0) {
+        log_message("Source %d: no usable audio (format=%s, streams=%u)", source->index + 1,
+                    format->iformat ? format->iformat->name : "unknown", format->nb_streams);
+        for (unsigned i = 0; i < format->nb_streams; i++) {
+            const AVCodecParameters *parameters = format->streams[i]->codecpar;
+            if (parameters->codec_type == AVMEDIA_TYPE_AUDIO)
+                log_message("Source %d: audio codec=%s, sample_rate=%d, channels=%d",
+                            source->index + 1, avcodec_get_name(parameters->codec_id),
+                            parameters->sample_rate, audio_parameter_channels(parameters));
+        }
         ret = audio;
         goto done;
     }
@@ -205,22 +219,55 @@ done:
     return ret;
 }
 
+typedef struct {
+    const char *parents[PLAYLIST_DEPTH];
+    int remaining;
+    bool stable;
+} PlaylistAttempt;
+
+static int play_url(Source *source, const char *url, PlaylistAttempt *attempt, int depth)
+{
+    if (stopping())
+        return AVERROR_EXIT;
+    if (depth >= PLAYLIST_DEPTH || attempt->remaining <= 0)
+        return AVERROR(ELOOP);
+    attempt->remaining--;
+    for (int i = 0; i < depth; i++)
+        if (!strcmp(url, attempt->parents[i]))
+            return AVERROR(ELOOP);
+    PlaylistInput input;
+    int ret = playlist_open(&input, url, source);
+    if (ret >= 0 && input.count) {
+        attempt->parents[depth] = input.url;
+        log_message("Source %d: playlist with %d entries", source->index + 1, input.count);
+        for (int i = 0; i < input.count && attempt->remaining > 0 && !stopping(); i++) {
+            log_message("Source %d: trying playlist entry %d", source->index + 1, i + 1);
+            ret = play_url(source, input.entries[i], attempt, depth + 1);
+        }
+    } else if (ret >= 0) {
+        ret = play_media(source, &input);
+        pthread_mutex_lock(&source->mutex);
+        attempt->stable |= source->online && monotonic_ns() - source->healthy_since >=
+            (int64_t)(source->config->recovery_seconds * 1e9);
+        source->online = false;
+        source->healthy_since = 0;
+        pthread_mutex_unlock(&source->mutex);
+    }
+    playlist_close(&input);
+    return ret;
+}
+
 static void *source_worker(void *opaque)
 {
     Source *source = opaque;
     double retry = source->config->retry_seconds;
     while (!stopping()) {
         log_message("Source %d: connecting", source->index + 1);
-        int ret = play_connection(source);
-        pthread_mutex_lock(&source->mutex);
-        bool stable = source->online && monotonic_ns() - source->healthy_since >=
-            (int64_t)(source->config->recovery_seconds * 1e9);
-        source->online = false;
-        source->healthy_since = 0;
-        pthread_mutex_unlock(&source->mutex);
+        PlaylistAttempt attempt = { .remaining = PLAYLIST_ENTRIES };
+        int ret = play_url(source, source->config->urls[source->index], &attempt, 0);
         if (stopping())
             break;
-        if (stable)
+        if (attempt.stable)
             retry = source->config->retry_seconds;
         char error[AV_ERROR_MAX_STRING_SIZE];
         av_strerror(ret, error, sizeof(error));
