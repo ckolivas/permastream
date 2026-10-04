@@ -1,0 +1,6 @@
+/permastream
+*.o
+*.d
+__pycache__/
+/permastream.toml
+/tests/artifacts/

@@ -1,0 +1,25 @@
+# Copy to permastream.toml, replace the URLs, then run ./permastream.
+listen = "0.0.0.0:8642"
+
+# Highest priority first. Use direct HTTP(S) audio or HLS URLs.
+streams = [
+    "https://primary.example/radio",
+    "https://backup.example/radio",
+]
+
+# Optional global settings (defaults shown):
+# buffer_seconds = 10           # Audio to accumulate before a source is ready
+# timeout_seconds = 10          # Connection/probing or decoded-audio stall timeout
+# recovery_seconds = 15         # Healthy delivery before returning to higher priority
+# retry_seconds = 1             # Initial reconnect delay
+# retry_max_seconds = 30        # Maximum reconnect delay
+# client_buffer_seconds = 5     # Slow-listener allowance, plus a small frame margin
+# max_clients = 64              # Total across every output
+
+[[outputs]]
+path = "/local.mp3"
+bitrate = 320
+
+[[outputs]]
+path = "/remote.mp3"
+bitrate = 64
