@@ -1,4 +1,5 @@
 #include "permastream.h"
+#include "ffmpeg_compat.h"
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -62,42 +63,39 @@ static void buffer_audio(Source *source, const float *pcm, size_t frames)
 }
 
 static int receive_audio(Source *source, AVCodecContext *decoder, AVFrame *frame,
-                         SwrContext **resampler, AVChannelLayout *previous_layout,
+                         SwrContext **resampler, AudioLayout *previous_layout,
                          int *previous_rate, int *previous_format,
                          uint8_t **pcm, unsigned int *pcm_capacity)
 {
     int ret;
     while ((ret = avcodec_receive_frame(decoder, frame)) >= 0) {
-        AVChannelLayout layout = {0};
-        if (frame->ch_layout.nb_channels < 1 || frame->sample_rate < 1 ||
+        AudioLayout layout = {0};
+        if (frame->sample_rate < 1 ||
             frame->nb_samples < 1 || frame->nb_samples > 1048576) {
             av_frame_unref(frame);
             return AVERROR_INVALIDDATA;
         }
-        if (frame->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
-            av_channel_layout_default(&layout, frame->ch_layout.nb_channels);
-        else if (av_channel_layout_copy(&layout, &frame->ch_layout) < 0)
-            return AVERROR(ENOMEM);
+        ret = audio_layout_from_frame(&layout, frame);
+        if (ret < 0)
+            return ret;
         if (!*resampler || *previous_rate != frame->sample_rate ||
             *previous_format != frame->format ||
-            av_channel_layout_compare(previous_layout, &layout)) {
+            audio_layout_compare(previous_layout, &layout)) {
             swr_free(resampler);
-            av_channel_layout_uninit(previous_layout);
-            AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
-            ret = swr_alloc_set_opts2(resampler, &stereo, AV_SAMPLE_FMT_FLT, SAMPLE_RATE,
-                                      &layout, frame->format, frame->sample_rate, 0, NULL);
+            audio_layout_uninit(previous_layout);
+            ret = audio_resampler_alloc(resampler, &layout, frame->format, frame->sample_rate);
             if (ret >= 0)
                 ret = swr_init(*resampler);
             if (ret >= 0)
-                ret = av_channel_layout_copy(previous_layout, &layout);
+                ret = audio_layout_copy(previous_layout, &layout);
             *previous_rate = frame->sample_rate;
             *previous_format = frame->format;
             if (ret < 0) {
-                av_channel_layout_uninit(&layout);
+                audio_layout_uninit(&layout);
                 return ret;
             }
         }
-        av_channel_layout_uninit(&layout);
+        audio_layout_uninit(&layout);
         int64_t needed = av_rescale_rnd(swr_get_delay(*resampler, frame->sample_rate) +
                                         frame->nb_samples, SAMPLE_RATE,
                                         frame->sample_rate, AV_ROUND_UP);
@@ -129,7 +127,7 @@ static int play_connection(Source *source)
     AVPacket *packet = av_packet_alloc();
     AVFrame *frame = av_frame_alloc();
     SwrContext *resampler = NULL;
-    AVChannelLayout previous_layout = {0};
+    AudioLayout previous_layout = {0};
     int previous_rate = 0, previous_format = -1;
     uint8_t *pcm = NULL;
     unsigned int pcm_capacity = 0;
@@ -154,10 +152,16 @@ static int play_connection(Source *source)
     ret = avformat_find_stream_info(format, NULL);
     if (ret < 0)
         goto done;
-    const AVCodec *codec = NULL;
-    int audio = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, -1, &codec, 0);
+    /* Older libavformat takes AVCodec ** here; newer releases take const
+     * AVCodec **. Look up the decoder separately instead of casting pointers. */
+    int audio = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     if (audio < 0) {
         ret = audio;
+        goto done;
+    }
+    const AVCodec *codec = avcodec_find_decoder(format->streams[audio]->codecpar->codec_id);
+    if (!codec) {
+        ret = AVERROR_DECODER_NOT_FOUND;
         goto done;
     }
     decoder = avcodec_alloc_context3(codec);
@@ -192,7 +196,7 @@ done:
     if (ret < 0 && source->deadline && monotonic_ns() >= source->deadline && !stopping())
         ret = AVERROR(ETIMEDOUT);
     av_free(pcm);
-    av_channel_layout_uninit(&previous_layout);
+    audio_layout_uninit(&previous_layout);
     swr_free(&resampler);
     av_frame_free(&frame);
     av_packet_free(&packet);

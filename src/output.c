@@ -1,4 +1,5 @@
 #include "permastream.h"
+#include "ffmpeg_compat.h"
 
 #include <libavcodec/avcodec.h>
 #include <libavutil/opt.h>
@@ -26,7 +27,7 @@ int output_init(Output *out, const OutputConfig *config, double buffer_seconds)
     out->codec->sample_fmt = AV_SAMPLE_FMT_FLTP;
     out->codec->bit_rate = config->bitrate * 1000;
     out->codec->time_base = (AVRational){1, SAMPLE_RATE};
-    av_channel_layout_default(&out->codec->ch_layout, CHANNELS);
+    audio_encoder_stereo(out->codec);
     /* Independent MP3 frames let a new listener join the live stream cleanly. */
     if (av_opt_set_int(out->codec->priv_data, "reservoir", 0, 0) < 0 ||
         avcodec_open2(out->codec, codec, NULL) < 0 ||
@@ -35,7 +36,7 @@ int output_init(Output *out, const OutputConfig *config, double buffer_seconds)
     out->frame->format = out->codec->sample_fmt;
     out->frame->sample_rate = SAMPLE_RATE;
     out->frame->nb_samples = AUDIO_FRAMES;
-    if (av_channel_layout_copy(&out->frame->ch_layout, &out->codec->ch_layout) < 0 ||
+    if (audio_frame_layout(out->frame, out->codec) < 0 ||
         av_frame_get_buffer(out->frame, 0) < 0)
         return -1;
     return 0;

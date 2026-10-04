@@ -51,7 +51,9 @@ rejects new connections with HTTP 503.
 `PREFIX` or stage packaging with `DESTDIR`). It never replaces your configuration.
 The build uses the system FFmpeg shared libraries, including the `libmp3lame`
 encoder. It is a single running application, **not a statically linked portable
-binary**. Tested with FFmpeg 7.1 on Linux.
+binary**. FFmpeg 4.4 (Ubuntu 22.04) and newer are supported: the build selects
+the appropriate channel-layout API automatically. No FFmpeg upgrade is needed
+on Ubuntu 22.04.
 
 ## Configuration
 

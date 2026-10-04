@@ -148,7 +148,10 @@ class Listener:
 
     def close(self):
         self.done.set()
-        self.socket.shutdown(socket.SHUT_RDWR)
+        try:
+            self.socket.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass  # Preserve the original test failure if the relay already exited.
         self.socket.close()
         self.thread.join()
 
@@ -301,6 +304,7 @@ max_clients = 12
 
             def expect(kind, timeout=12):
                 def selected():
+                    assert process.poll() is None, f"Relay exited with status {process.returncode}"
                     lines = [line for line in log_path.read_text().splitlines() if "Output:" in line]
                     return lines[-1] if lines else ""
                 match = f"Output: source {1 if kind == 'primary' else 2}" if kind != "silence" else "Output: silence;"

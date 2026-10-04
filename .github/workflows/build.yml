@@ -1,0 +1,26 @@
+name: Build and streaming tests
+
+on: [push, pull_request]
+
+jobs:
+  linux:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config \
+            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev \
+            ffmpeg openssl python3
+      - name: Build with warnings treated as errors
+        env:
+          CFLAGS: -O2 -g -Werror
+        run: make -j2
+      - name: Test streaming, failover and HLS
+        run: make test
